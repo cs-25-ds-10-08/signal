@@ -39,6 +39,7 @@ pub enum SignalClientError {
 }
 
 impl Error for SignalClientError {}
+unsafe impl Send for SignalClientError {}
 
 #[derive(Debug, Display, From, Error)]
 pub struct ProcessPreKeyBundleError(pub SignalProtocolError);

@@ -226,7 +226,7 @@ impl SignalServerAPI for SignalServer {
     ) -> Result<(), SignalClientError> {
         let payload = to_vec(&messages).unwrap();
         let uri = format!("{}/{}?story=false", MSG_URI, recipient.service_id_string());
-        println!("Sending message to: {}", uri);
+        // println!("Sending message to: {}", uri);
 
         let id = self.socket_manager.next_id();
         let response = self
@@ -317,7 +317,7 @@ impl SignalServer {
         };
 
         let http_client: H1Client = http_client::Config::new()
-            .set_timeout(Some(Duration::from_secs(5)))
+            .set_timeout(Some(Duration::from_secs(50)))
             .set_tls_config(tls_config)
             .try_into()
             .expect("Could not create HTTP client");

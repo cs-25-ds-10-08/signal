@@ -1,0 +1,7 @@
+services:
+  myapp:
+    image: awesome/webapp
+    deploy:
+      mode: replicated
+      replicas: 6
+

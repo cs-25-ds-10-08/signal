@@ -81,10 +81,20 @@ impl<W: WSStream<Message, Error> + Debug + Send + 'static, DB: SignalDatabase + 
 
     pub async fn send_message(&mut self, message: Envelope) -> Result<(), String> {
         let msg = self
-            .create_message(message)
+            .create_message(message.clone())
             .map_err(|_| "Time went backwards".to_string())?;
         match self.send(Message::Binary(msg.encode_to_vec())).await {
-            Ok(_) => Ok(()),
+            Ok(_) => {
+                self.state
+                    .message_manager
+                    .delete(
+                        &self.protocol_address(),
+                        vec![message.server_guid().to_owned()],
+                    )
+                    .await
+                    .map_err(|err| format!("{}", err))?;
+                Ok(())
+            }
             Err(err) => Err(format!("{}", err)),
         }
     }

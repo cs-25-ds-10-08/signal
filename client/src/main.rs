@@ -1,6 +1,8 @@
-use axum::serve;
 use client::Client;
 use dotenv::dotenv;
+use futures::future::join_all;
+use libsignal_core::ServiceId;
+use rand::{rngs::OsRng, seq::SliceRandom, Rng};
 use server::SignalServer;
 use std::{
     collections::HashMap,
@@ -8,8 +10,10 @@ use std::{
     error::Error,
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use storage::{device::Device, generic::SignalStore};
+use tokio::sync::Mutex;
 
 mod client;
 mod contact_manager;
@@ -35,22 +39,22 @@ fn client_db_path() -> String {
 }
 
 async fn make_client(
-    name: &str,
-    phone: &str,
-    certificate_path: &Option<String>,
-    server_url: &str,
+    name: String,
+    phone: String,
+    certificate_path: Option<String>,
+    server_url: String,
 ) -> Client<Device, SignalServer> {
-    let db_path = client_db_path() + "/" + name + ".db";
+    let db_path = client_db_path() + "/" + &name + ".db";
     let db_url = format!("sqlite://{}", db_path);
     let client = if Path::exists(Path::new(&db_path)) {
-        Client::<Device, SignalServer>::login(&db_url, certificate_path, server_url).await
+        Client::<Device, SignalServer>::login(&db_url, &certificate_path, &server_url).await
     } else {
         Client::<Device, SignalServer>::register(
-            name,
-            phone.into(),
+            &name,
+            phone,
             &db_url,
-            server_url,
-            certificate_path,
+            &server_url,
+            &certificate_path,
         )
         .await
     };
@@ -96,7 +100,7 @@ async fn receive_message(
     client: &mut Client<Device, SignalServer>,
     names: &HashMap<String, String>,
     default: &String,
-) {
+) -> String {
     let msg = client.receive_message().await.expect("Expected Message");
     let name = names
         .get(
@@ -106,43 +110,284 @@ async fn receive_message(
         )
         .unwrap_or(default);
     let msg_text = msg.try_get_message_as_string().expect("No Text Content");
-    println!("{name}: {msg_text}");
+    // println!("{name}: {msg_text}");
+    format!("{}", name)
+}
+
+// Random noise
+async fn experiment_1() -> Result<(), Box<dyn Error>> {
+    dotenv()?;
+
+    let (cert_path, server_url) = get_server_info();
+
+    const ROUNDS: usize = 100;
+    const CLIENT_AMOUNT: usize = 100;
+
+    let mut clients = vec![
+        make_client(
+            format!("client_0"),
+            format!("0"),
+            cert_path.clone(),
+            server_url.clone(),
+        )
+        .await,
+        make_client(
+            format!("client_1"),
+            format!("1"),
+            cert_path.clone(),
+            server_url.clone(),
+        )
+        .await,
+    ];
+    clients.extend(
+        join_all(
+            (2..CLIENT_AMOUNT)
+                .map(|i| {
+                    make_client(
+                        format!("client_{}", i),
+                        format!("{}", i),
+                        cert_path.clone(),
+                        server_url.clone(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )
+        .await,
+    );
+
+    for i in 0..CLIENT_AMOUNT {
+        for j in 0..CLIENT_AMOUNT {
+            if i == j {
+                continue;
+            }
+            let service_id: ServiceId = clients[j].aci.into();
+
+            clients[i]
+                .add_contact(&format!("client_{}", j), &service_id)
+                .await
+                .expect(&format!("client_{} failed to be added as contact", j));
+        }
+    }
+
+    let mut contact_names = HashMap::new();
+    let default_sender = "Unknown Sender".to_owned();
+
+    for i in 0..CLIENT_AMOUNT {
+        add_name(&mut contact_names, &clients[i], &format!("client_{}", i)).await;
+    }
+
+    for _ in 0..ROUNDS {
+        clients[0]
+            .send_message("hello alice, how are you? I am good, i have bouaght a new car, it has 12 cylineders and says wroom wroom", "client_1")
+            .await?;
+        clients[1].send_message("hello bob", "client_0").await?;
+
+        receive_message(&mut clients[0], &contact_names, &default_sender).await;
+        receive_message(&mut clients[1], &contact_names, &default_sender).await;
+
+        let rand1 = rand::thread_rng().gen_range(0..CLIENT_AMOUNT);
+        let rand2 = rand::thread_rng().gen_range(0..CLIENT_AMOUNT);
+
+        if rand1 == rand2 {
+            continue;
+        }
+
+        clients[rand1]
+            .send_message("hello", &format!("client_{}", rand2))
+            .await?;
+        clients[rand2]
+            .send_message("hello", &format!("client_{}", rand1))
+            .await?;
+
+        receive_message(&mut clients[rand1], &contact_names, &default_sender).await;
+        receive_message(&mut clients[rand2], &contact_names, &default_sender).await;
+    }
+
+    for i in 0..CLIENT_AMOUNT {
+        clients[i].disconnect().await;
+    }
+
+    Ok(())
+}
+
+// Can only comunicate with clients in its own group
+// A client will only be present in one group
+async fn experiment_2() -> Result<(), Box<dyn Error>> {
+    dotenv()?;
+
+    let (cert_path, server_url) = get_server_info();
+
+    const ROUNDS: usize = 100;
+    const CLIENT_AMOUNT: usize = 100;
+    const GROUP_SIZE_MIN: usize = 2;
+    const GROUP_SIZE_MAX: usize = 5;
+
+    let mut groups: Vec<Vec<usize>> = vec![];
+
+    let mut clients = vec![
+        Arc::new(Mutex::new(
+            make_client(
+                format!("client_0"),
+                format!("0"),
+                cert_path.clone(),
+                server_url.clone(),
+            )
+            .await,
+        )),
+        Arc::new(Mutex::new(
+            make_client(
+                format!("client_1"),
+                format!("1"),
+                cert_path.clone(),
+                server_url.clone(),
+            )
+            .await,
+        )),
+    ];
+    clients.extend(
+        join_all(
+            (2..CLIENT_AMOUNT)
+                .map(|i| {
+                    make_client(
+                        format!("client_{}", i),
+                        format!("{}", i),
+                        cert_path.clone(),
+                        server_url.clone(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )
+        .await
+        .into_iter()
+        .map(|c| Arc::new(Mutex::new(c))),
+    );
+
+    for i in 0..CLIENT_AMOUNT {
+        for j in 0..CLIENT_AMOUNT {
+            if i == j {
+                continue;
+            }
+
+            let mut clienti = clients[i].lock().await;
+            let clientj = clients[j].lock().await;
+
+            let service_id: ServiceId = clientj.aci.into();
+
+            clienti
+                .add_contact(&format!("client_{}", j), &service_id)
+                .await
+                .expect(&format!("client_{} failed to be added as contact", j));
+        }
+    }
+
+    let mut contact_names = HashMap::new();
+    let default_sender = "Unknown Sender".to_owned();
+
+    for i in 0..CLIENT_AMOUNT {
+        let clienti = clients[i].lock().await;
+        add_name(&mut contact_names, &clienti, &format!("client_{}", i)).await;
+    }
+
+    groups.push(vec![0, 1]);
+
+    let mut groups_num = 0;
+    let mut i = 2;
+
+    while i < CLIENT_AMOUNT {
+        groups.push(vec![]);
+        groups_num += 1;
+        let group_size = if i + GROUP_SIZE_MAX >= CLIENT_AMOUNT {
+            CLIENT_AMOUNT - i
+        } else if i + GROUP_SIZE_MAX + GROUP_SIZE_MIN >= CLIENT_AMOUNT {
+            (GROUP_SIZE_MAX + GROUP_SIZE_MIN) / 2
+        } else {
+            rand::thread_rng().gen_range(GROUP_SIZE_MIN..=GROUP_SIZE_MAX)
+        };
+        // Simpler, but may result in more clients than CLIENT_AMOUNT
+        // let group_size = rand::thread_rng().gen_range(GROUP_SIZE_MIN..=GROUP_SIZE_MAX);
+
+        for j in 0..group_size {
+            groups[groups_num].push(i + j);
+        }
+
+        i += group_size;
+    }
+
+    for round in 0..ROUNDS {
+        println!("Round: {}", round);
+        groups.shuffle(&mut OsRng);
+
+        for group in groups.iter() {
+            let members = group
+                .choose_multiple(&mut OsRng, 2)
+                .collect::<Vec<&usize>>();
+            let client1 = clients[*members[0]].clone();
+            let client2 = clients[*members[1]].clone();
+            let name1 = format!("client_{}", members[0]);
+            let name2 = format!("client_{}", members[1]);
+            let default_sender_clone = default_sender.clone();
+            let contact_names_clone = contact_names.clone();
+
+            tokio::spawn(async move {
+                let mut client1 = client1.lock().await;
+                let mut client2 = client2.lock().await;
+                client1
+                    .send_message("hello", &name2)
+                    .await
+                    .expect("This works");
+
+                receive_message(&mut client2, &contact_names_clone, &default_sender_clone).await;
+
+                client2
+                    .send_message("hello", &name1)
+                    .await
+                    .expect("This works");
+
+                receive_message(&mut client1, &contact_names_clone, &default_sender_clone).await;
+            });
+        }
+
+        join_all(
+            groups
+                .iter_mut()
+                .map(|group| async {
+                    let members = group
+                        .choose_multiple(&mut OsRng, 2)
+                        .collect::<Vec<&usize>>();
+                    let mut client1 = clients[*members[0]].lock().await;
+                    let mut client2 = clients[*members[1]].lock().await;
+                    let name1 = format!("client_{}", members[0]);
+                    let name2 = format!("client_{}", members[1]);
+
+                    client1
+                        .send_message("hello", &name2)
+                        .await
+                        .expect("This works");
+
+                    receive_message(&mut client2, &contact_names, &default_sender).await;
+
+                    client2
+                        .send_message("hello", &name1)
+                        .await
+                        .expect("This works");
+
+                    receive_message(&mut client1, &contact_names, &default_sender).await;
+                })
+                .collect::<Vec<_>>(),
+        )
+        .await;
+    }
+
+    for i in 0..CLIENT_AMOUNT {
+        let mut clienti = clients[i].lock().await;
+        clienti.disconnect().await;
+    }
+
+    Ok(())
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    dotenv()?;
-
-    let (cert_path, server_url) = get_server_info();
-    let mut alice = make_client("alice", "123456789", &cert_path, &server_url).await;
-    let mut bob = make_client("bob", "123456784", &cert_path, &server_url).await;
-
-    alice
-        .add_contact("bob", &bob.aci.into())
-        .await
-        .expect("No bob?");
-    bob.add_contact("alice", &alice.aci.into())
-        .await
-        .expect("No alice?");
-
-    let mut contact_names = HashMap::new();
-    let default_sender = "Unknown Sender".to_owned();
-    add_name(&mut contact_names, &alice, "Alice").await;
-    add_name(&mut contact_names, &bob, "Bob").await;
-
-    alice.send_message("Hello Bob!", "bob").await?;
-    receive_message(&mut bob, &contact_names, &default_sender).await;
-
-    bob.send_message("Hello Alice!", "alice").await?;
-    receive_message(&mut alice, &contact_names, &default_sender).await;
-
-    alice.send_message("Hello Bob again!", "bob").await?;
-    receive_message(&mut bob, &contact_names, &default_sender).await;
-
-    bob.send_message("Hello Alice again!", "alice").await?;
-    receive_message(&mut alice, &contact_names, &default_sender).await;
-
-    alice.disconnect().await;
-    bob.disconnect().await;
-    Ok(())
+    // experiment_1().await
+    experiment_2().await
 }

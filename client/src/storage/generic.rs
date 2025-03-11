@@ -1,6 +1,9 @@
-use super::database::{
-    ClientDB, DeviceIdentityKeyStore, DeviceKyberPreKeyStore, DevicePreKeyStore,
-    DeviceSenderKeyStore, DeviceSessionStore, DeviceSignedPreKeyStore,
+use super::{
+    database::{
+        ClientDB, DeviceIdentityKeyStore, DeviceKyberPreKeyStore, DevicePreKeyStore,
+        DeviceSenderKeyStore, DeviceSessionStore, DeviceSignedPreKeyStore,
+    },
+    device::Device,
 };
 use axum::async_trait;
 use libsignal_core::{Aci, Pni, ProtocolAddress};
@@ -46,6 +49,8 @@ pub struct ProtocolStore<T: ClientDB> {
     pub session_store: DeviceSessionStore<T>,
     pub sender_key_store: DeviceSenderKeyStore<T>,
 }
+
+unsafe impl Send for ProtocolStore<Device> {}
 
 impl<T: ClientDB + Clone> ProtocolStore<T> {
     pub fn new(device: T) -> Self {
