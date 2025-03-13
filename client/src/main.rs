@@ -1,6 +1,6 @@
 use client::Client;
 use dotenv::dotenv;
-use futures::future::join_all;
+use futures::{future::join_all, stream::FuturesUnordered, StreamExt};
 use libsignal_core::ServiceId;
 use rand::{rngs::OsRng, seq::SliceRandom, Rng};
 use server::SignalServer;
@@ -11,9 +11,10 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use storage::{device::Device, generic::SignalStore};
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, time::timeout};
 
 mod client;
 mod contact_manager;
@@ -317,65 +318,36 @@ async fn experiment_2() -> Result<(), Box<dyn Error>> {
         println!("Round: {}", round);
         groups.shuffle(&mut OsRng);
 
-        for group in groups.iter() {
-            let members = group
-                .choose_multiple(&mut OsRng, 2)
-                .collect::<Vec<&usize>>();
-            let client1 = clients[*members[0]].clone();
-            let client2 = clients[*members[1]].clone();
-            let name1 = format!("client_{}", members[0]);
-            let name2 = format!("client_{}", members[1]);
-            let default_sender_clone = default_sender.clone();
-            let contact_names_clone = contact_names.clone();
+        groups
+            .iter()
+            .map(|group| async {
+                let members = group.choose_multiple(&mut OsRng, 2).collect::<Vec<_>>();
+                let client = clients[*members[0]].clone();
 
-            tokio::spawn(async move {
-                let mut client1 = client1.lock().await;
-                let mut client2 = client2.lock().await;
-                client1
-                    .send_message("hello", &name2)
-                    .await
-                    .expect("This works");
-
-                receive_message(&mut client2, &contact_names_clone, &default_sender_clone).await;
-
-                client2
-                    .send_message("hello", &name1)
-                    .await
-                    .expect("This works");
-
-                receive_message(&mut client1, &contact_names_clone, &default_sender_clone).await;
-            });
-        }
-
-        join_all(
-            groups
-                .iter_mut()
-                .map(|group| async {
-                    let members = group
-                        .choose_multiple(&mut OsRng, 2)
-                        .collect::<Vec<&usize>>();
-                    let mut client1 = clients[*members[0]].lock().await;
-                    let mut client2 = clients[*members[1]].lock().await;
-                    let name1 = format!("client_{}", members[0]);
-                    let name2 = format!("client_{}", members[1]);
-
-                    client1
-                        .send_message("hello", &name2)
-                        .await
-                        .expect("This works");
-
-                    receive_message(&mut client2, &contact_names, &default_sender).await;
-
-                    client2
-                        .send_message("hello", &name1)
-                        .await
-                        .expect("This works");
-
-                    receive_message(&mut client1, &contact_names, &default_sender).await;
+                let reciever = timeout(
+                    Duration::from_millis(100),
+                    receive_message(&mut *client.lock().await, &contact_names, &default_sender),
+                )
+                .await
+                .ok()
+                .and_then(|alias| {
+                    if rand::thread_rng().gen_range(1..=100) > 90 {
+                        return None;
+                    }
+                    Some(alias)
                 })
-                .collect::<Vec<_>>(),
-        )
-        .await;
+                .unwrap_or(format!("client_{}", members[1]));
+
+                client
+                    .lock()
+                    .await
+                    .send_message("hello", &reciever)
+                    .await
+                    .expect("This works");
+            })
+            .collect::<FuturesUnordered<_>>()
+            .collect::<Vec<_>>()
+            .await;
     }
 
     for i in 0..CLIENT_AMOUNT {
