@@ -236,8 +236,6 @@ pub mod test {
             .await
             .unwrap();
 
-        let bob = manager.get_contact(&bob_id).unwrap();
-
         let _ = process_prekey_bundle(
             &manager
                 .get_contact(&bob_id)
@@ -255,7 +253,7 @@ pub mod test {
         let msg_map = encrypt(
             &mut alice_store.identity_key_store,
             &mut alice_store.session_store,
-            bob,
+            manager.get_contact(&bob_id).unwrap(),
             "Hello Bob".as_bytes(),
             SystemTime::now(),
         )

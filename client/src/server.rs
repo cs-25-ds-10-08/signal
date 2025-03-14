@@ -15,6 +15,7 @@ use common::web_api::{
 use common::web_api::{SetKeyRequest, SignalMessages};
 use common::websocket::net_helper::{create_request, create_response};
 use flate2::read::GzDecoder;
+use futures::{StreamExt, TryStreamExt};
 use http_client::h1::H1Client;
 use libsignal_core::{Aci, DeviceId, ServiceId};
 use libsignal_protocol::PreKeyBundle;
@@ -140,6 +141,7 @@ impl SignalServerAPI for SignalServer {
             .await
             .map_err(SignalClientError::WebSocketError)?;
         let ws = SignalStream::new(ws);
+
         self.socket_manager
             .set_stream(ws)
             .await
