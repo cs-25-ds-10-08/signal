@@ -241,6 +241,8 @@ impl<T: ClientDB, U: SignalServerAPI> Client<T, U> {
             .connect(&aci.service_id_string(), &password, server_url, cert_path)
             .await?;
 
+        server_api.create_auth_header(aci, password.clone(), 1.into());
+
         Ok(Client::new(
             device.get_aci().await.map_err(DatabaseError::from)?,
             device.get_pni().await.map_err(DatabaseError::from)?,

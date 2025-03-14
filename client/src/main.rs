@@ -218,7 +218,7 @@ async fn experiment_2() -> Result<(), Box<dyn Error>> {
 
     let (cert_path, server_url) = get_server_info();
 
-    const ROUNDS: usize = 100;
+    const ROUNDS: usize = 1000;
     const CLIENT_AMOUNT: usize = 100;
     const GROUP_SIZE_MIN: usize = 2;
     const GROUP_SIZE_MAX: usize = 5;
@@ -314,41 +314,46 @@ async fn experiment_2() -> Result<(), Box<dyn Error>> {
         i += group_size;
     }
 
-    for round in 0..ROUNDS {
-        println!("Round: {}", round);
-        groups.shuffle(&mut OsRng);
-
-        groups
-            .iter()
-            .map(|group| async {
+    groups
+        .iter()
+        .map(|group| async {
+            for _ in 0..ROUNDS {
                 let members = group.choose_multiple(&mut OsRng, 2).collect::<Vec<_>>();
                 let client = clients[*members[0]].clone();
+                let mut client = client.lock().await;
+                let name0 = format!("client_{}", members[0]);
+                let name1 = format!("client_{}", members[1]);
 
-                let reciever = timeout(
+                while let Some(receiver) = timeout(
                     Duration::from_millis(100),
-                    receive_message(&mut *client.lock().await, &contact_names, &default_sender),
+                    receive_message(&mut client, &contact_names, &default_sender),
                 )
                 .await
                 .ok()
-                .and_then(|alias| {
-                    if rand::thread_rng().gen_range(1..=100) > 90 {
-                        return None;
+                {
+                    println!("{} <- {}", name0, receiver);
+                    if true_by_chance(10) {
+                        continue;
                     }
-                    Some(alias)
-                })
-                .unwrap_or(format!("client_{}", members[1]));
+                    println!("{} -> {}", name0, receiver);
+                    client
+                        .send_message("hello", &receiver)
+                        .await
+                        .expect("This works");
+                }
 
-                client
-                    .lock()
-                    .await
-                    .send_message("hello", &reciever)
-                    .await
-                    .expect("This works");
-            })
-            .collect::<FuturesUnordered<_>>()
-            .collect::<Vec<_>>()
-            .await;
-    }
+                println!("{} -> {}", name0, name1);
+                if true_by_chance(5) {
+                    client
+                        .send_message("hello", &name1)
+                        .await
+                        .expect("This works");
+                }
+            }
+        })
+        .collect::<FuturesUnordered<_>>()
+        .collect::<Vec<_>>()
+        .await;
 
     for i in 0..CLIENT_AMOUNT {
         let mut clienti = clients[i].lock().await;
@@ -356,6 +361,10 @@ async fn experiment_2() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+fn true_by_chance(chance: usize) -> bool {
+    OsRng.gen_range(0..=100) <= chance
 }
 
 #[tokio::main]
