@@ -25,8 +25,8 @@ use libsignal_protocol::{process_prekey_bundle, CiphertextMessage, IdentityKeyPa
 use prost::Message;
 use rand::{rngs::OsRng, Rng};
 use sqlx::{migrate::MigrateDatabase, Sqlite, SqlitePool};
-use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::{collections::HashMap, thread, time::Duration};
 
 pub struct Client<T: ClientDB, U: SignalServerAPI> {
     pub aci: Aci,
@@ -64,7 +64,9 @@ impl<T: ClientDB, U: SignalServerAPI> Client<T, U> {
     async fn connect_to_db(database_url: &str, create_db: bool) -> Result<SqlitePool> {
         if create_db {
             if !Sqlite::database_exists(database_url).await.unwrap_or(false) {
-                Sqlite::create_database(database_url).await.unwrap();
+                Sqlite::create_database(database_url)
+                    .await
+                    .expect(&format!("Could not open db: {}", database_url));
             } else {
                 return Err(DatabaseError::AlreadyExists.into());
             }
