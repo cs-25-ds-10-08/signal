@@ -175,13 +175,10 @@ async fn receive_message(client: &mut Client<Device, SignalServer>) -> (ServiceI
 }
 
 // Random noise
-async fn experiment_1() -> Result<(), Box<dyn Error>> {
+async fn experiment_1(rounds: usize, client_amount: usize) -> Result<(), Box<dyn Error>> {
     dotenv()?;
 
-    const ROUNDS: usize = 100;
-    const CLIENT_AMOUNT: usize = 100;
-
-    let clients = Arc::new(make_clients(CLIENT_AMOUNT).await);
+    let clients = Arc::new(make_clients(client_amount).await);
 
     clients
         .iter()
@@ -189,7 +186,7 @@ async fn experiment_1() -> Result<(), Box<dyn Error>> {
         .map(|(i, client)| {
             let clients = clients.clone();
             async move {
-                for _ in 0..ROUNDS {
+                for _ in 0..rounds {
                     while let Some((receiver, _)) = timeout(
                         Duration::from_millis(100),
                         receive_message(&mut *client.write().await),
@@ -210,7 +207,7 @@ async fn experiment_1() -> Result<(), Box<dyn Error>> {
 
                     if true_by_chance(5) {
                         let random_client_nr = loop {
-                            let rand = OsRng.gen_range(0..CLIENT_AMOUNT);
+                            let rand = OsRng.gen_range(0..client_amount);
                             if rand != i {
                                 break rand;
                             }
@@ -238,21 +235,21 @@ async fn experiment_1() -> Result<(), Box<dyn Error>> {
 
 // Can only comunicate with clients in its own group
 // A client will only be present in one group
-async fn experiment_2() -> Result<(), Box<dyn Error>> {
+async fn experiment_2(
+    rounds: usize,
+    client_amount: usize,
+    group_size_min: usize,
+    group_size_max: usize,
+) -> Result<(), Box<dyn Error>> {
     dotenv()?;
 
-    const ROUNDS: usize = 100;
-    const CLIENT_AMOUNT: usize = 100;
-    const GROUP_SIZE_MIN: usize = 2;
-    const GROUP_SIZE_MAX: usize = 5;
-
-    let clients = make_clients(CLIENT_AMOUNT).await;
-    let groups = make_groups(CLIENT_AMOUNT, GROUP_SIZE_MIN, GROUP_SIZE_MAX);
+    let clients = make_clients(client_amount).await;
+    let groups = make_groups(client_amount, group_size_min, group_size_max);
 
     groups
         .iter()
         .map(|group| async {
-            for _ in 0..ROUNDS {
+            for _ in 0..rounds {
                 let members = group.choose_multiple(&mut OsRng, 2).collect::<Vec<_>>();
                 let client = clients[*members[0]].clone();
                 let backup = clients[*members[1]].read().await.aci.into();
@@ -299,6 +296,14 @@ fn true_by_chance(chance: usize) -> bool {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    experiment_1().await
-    //experiment_2().await
+    const ROUNDS: usize = 100;
+    const CLIENT_AMOUNT: usize = 100;
+
+    #[allow(dead_code)]
+    const GROUP_SIZE_MIN: usize = 2;
+    #[allow(dead_code)]
+    const GROUP_SIZE_MAX: usize = 5;
+
+    experiment_1(ROUNDS, CLIENT_AMOUNT).await
+    //experiment_2(ROUNDS, CLIENT_AMOUNT, GROUP_SIZE_MIN, GROUP_SIZE_MAX).await
 }
