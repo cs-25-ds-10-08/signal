@@ -6,7 +6,6 @@ use rand::{rngs::OsRng, seq::SliceRandom, Rng};
 use server::SignalServer;
 use std::{
     env::{self},
-    error::Error,
     fs, io,
     path::{Path, PathBuf},
     sync::Arc,
@@ -32,7 +31,7 @@ type Clients = Vec<Arc<RwLock<Client<Device, SignalServer>>>>;
 #[tokio::main]
 async fn main() {
     const ROUNDS: usize = 100;
-    const CLIENT_AMOUNT: usize = 1000;
+    const CLIENT_AMOUNT: usize = 10;
 
     #[allow(dead_code)]
     const GROUP_SIZE_MIN: usize = 2;
@@ -43,8 +42,8 @@ async fn main() {
 
     match init(CLIENT_AMOUNT).await {
         Ok(clients) => {
-            if let Err(e) = experiment_1(ROUNDS, clients).await
-            //experiment_2(ROUNDS, clients, GROUP_SIZE_MIN, GROUP_SIZE_MAX).await
+            if let Err(e) = //experiment_1(ROUNDS, clients).await
+                experiment_2(ROUNDS, clients, GROUP_SIZE_MIN, GROUP_SIZE_MAX).await
             {
                 error = Some(e);
             }
@@ -126,12 +125,13 @@ async fn experiment_2(
     clients: Clients,
     group_size_min: usize,
     group_size_max: usize,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), String> {
     let groups = make_groups(clients.len(), group_size_min, group_size_max);
 
     groups
         .iter()
         .map(|group| async {
+            let mut force_new_conversation = true;
             for _ in 0..rounds {
                 let members = group.choose_multiple(&mut OsRng, 2).collect::<Vec<_>>();
                 let client = clients[*members[0]].clone();
@@ -147,6 +147,7 @@ async fn experiment_2(
                     if true_by_chance(10) {
                         continue;
                     }
+                    force_new_conversation = false;
                     client
                         .write()
                         .await
@@ -155,7 +156,7 @@ async fn experiment_2(
                         .expect("This might works");
                 }
 
-                if true_by_chance(5) {
+                if force_new_conversation || true_by_chance(10) {
                     client
                         .write()
                         .await
@@ -198,9 +199,10 @@ fn cleanup() {
 
 async fn make_clients(client_amount: usize) -> Result<Clients, String> {
     let (cert_path, server_url) = get_server_info();
-    let mut clients;
+    let mut clients = vec![];
 
     /*for i in 2..client_amount {
+        println!("{}", i);
         clients.push(Arc::new(RwLock::new(
             make_client(
                 format!("client_{}", i),
@@ -208,7 +210,7 @@ async fn make_clients(client_amount: usize) -> Result<Clients, String> {
                 cert_path.clone(),
                 server_url.clone(),
             )
-            .await,
+            .await?,
         )))
     }*/
 
@@ -278,10 +280,11 @@ fn make_groups(
     group_size_max: usize,
 ) -> Vec<Vec<usize>> {
     let mut groups = vec![];
-    groups.push(vec![0, 1]);
+    groups.push(vec![clients_amount - 2, clients_amount - 1]);
+    let clients_amount = clients_amount - 2;
 
     let mut groups_num = 0;
-    let mut i = 2;
+    let mut i = 0;
 
     while i < clients_amount {
         groups.push(vec![]);
