@@ -301,6 +301,18 @@ async fn init(client_amount: usize) -> Clients {
     clients
 }
 
+fn cleanup() {
+    for entry in fs::read_dir("client_db/").expect("Could not read dir") {
+        let path = entry.unwrap().path();
+        if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+            if file_name.starts_with("client_") {
+                let _ = fs::remove_file(&path);
+                println!("Deleted: {:?}", path);
+            }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     const ROUNDS: usize = 100;
@@ -313,6 +325,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let clients = init(CLIENT_AMOUNT).await;
 
-    experiment_1(ROUNDS, clients).await
-    //experiment_2(ROUNDS, clients, GROUP_SIZE_MIN, GROUP_SIZE_MAX).await;
+    experiment_1(ROUNDS, clients).await?;
+    //experiment_2(ROUNDS, clients, GROUP_SIZE_MIN, GROUP_SIZE_MAX).await?;
+
+    cleanup();
+
+    Ok(())
 }
