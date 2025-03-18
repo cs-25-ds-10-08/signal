@@ -62,8 +62,14 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tower::ServiceBuilder;
-use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
+use tower_http::{
+    compression::CompressionLayer,
+    trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer},
+};
+use tracing::Level;
+use tracing_appender::rolling;
+use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter, FmtSubscriber};
 
 pub async fn handle_put_messages<T: SignalDatabase, U: WSStream<Message, axum::Error> + Debug>(
     state: &SignalServerState<T, U>,
@@ -542,6 +548,7 @@ async fn put_messages_endpoint(
     Path(destination_identifier): Path<String>,
     Json(payload): Json<SignalMessages>,
 ) -> Result<SendMessageResponse, ApiError> {
+    println!("Message inserted");
     let destination_identifier = parse_service_id(destination_identifier)?;
     handle_put_messages(
         &state,

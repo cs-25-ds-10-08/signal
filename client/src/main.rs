@@ -70,6 +70,7 @@ async fn experiment_1(rounds: usize, clients: Clients) -> Result<(), String> {
         .map(|(i, client)| {
             let clients = clients.clone();
             async move {
+                let mut force_new_conversation = true;
                 for _ in 0..rounds {
                     while let Some((receiver, _)) = timeout(
                         Duration::from_millis(100),
@@ -81,6 +82,7 @@ async fn experiment_1(rounds: usize, clients: Clients) -> Result<(), String> {
                         if true_by_chance(10) {
                             continue;
                         }
+                        force_new_conversation = false;
                         client
                             .write()
                             .await
@@ -89,7 +91,7 @@ async fn experiment_1(rounds: usize, clients: Clients) -> Result<(), String> {
                             .expect("This might works");
                     }
 
-                    if true_by_chance(5) {
+                    if force_new_conversation || true_by_chance(10) {
                         let random_client_nr = loop {
                             let rand = OsRng.gen_range(0..clients.len());
                             if rand != i {
@@ -126,7 +128,18 @@ async fn experiment_2(
     group_size_min: usize,
     group_size_max: usize,
 ) -> Result<(), String> {
-    let groups = make_groups(clients.len(), group_size_min, group_size_max);
+    let client0 = clients[8].clone();
+    let client1 = clients[9].clone();
+    client0
+        .write()
+        .await
+        .send_message("hello", &client1.read().await.aci.into())
+        .await
+        .expect("This might work");
+
+    receive_message(&mut *client1.write().await).await;
+
+    /*let groups = make_groups(clients.len(), group_size_min, group_size_max);
 
     groups
         .iter()
@@ -135,25 +148,34 @@ async fn experiment_2(
             for _ in 0..rounds {
                 let members = group.choose_multiple(&mut OsRng, 2).collect::<Vec<_>>();
                 let client = clients[*members[0]].clone();
-                let backup = clients[*members[1]].read().await.aci.into();
+                let backup: ServiceId = clients[*members[1]].read().await.aci.into();
 
-                while let Some((receiver, _)) = timeout(
-                    Duration::from_millis(100),
-                    receive_message(&mut *client.write().await),
-                )
-                .await
-                .ok()
-                {
-                    if true_by_chance(10) {
-                        continue;
+                loop {
+                    match timeout(
+                        Duration::from_millis(100),
+                        receive_message(&mut *client.write().await),
+                    )
+                    .await
+                    .ok()
+                    {
+                        Some((receiver, _)) => {
+                            println!("THIS CANT BEE");
+                            /*if true_by_chance(0) {
+                                force_new_conversation = true;
+                                continue;
+                            }*/
+                            force_new_conversation = false;
+                            for _ in 0..OsRng.gen_range(1..3) {
+                                client
+                                    .write()
+                                    .await
+                                    .send_message("hello", &receiver)
+                                    .await
+                                    .expect("This might work");
+                            }
+                        }
+                        None => break,
                     }
-                    force_new_conversation = false;
-                    client
-                        .write()
-                        .await
-                        .send_message("hello", &receiver)
-                        .await
-                        .expect("This might works");
                 }
 
                 if force_new_conversation || true_by_chance(10) {
@@ -162,13 +184,13 @@ async fn experiment_2(
                         .await
                         .send_message("hello", &backup)
                         .await
-                        .expect("This might works");
+                        .expect("This might work");
                 }
             }
         })
         .collect::<FuturesUnordered<_>>()
         .collect::<Vec<_>>()
-        .await;
+        .await;*/
 
     disconnect_clients(clients).await;
     Ok(())
@@ -199,7 +221,7 @@ fn cleanup() {
 
 async fn make_clients(client_amount: usize) -> Result<Clients, String> {
     let (cert_path, server_url) = get_server_info();
-    let mut clients = vec![];
+    let mut clients; //= vec![];
 
     /*for i in 2..client_amount {
         println!("{}", i);
@@ -325,7 +347,7 @@ async fn receive_message(client: &mut Client<Device, SignalServer>) -> (ServiceI
 }
 
 fn true_by_chance(chance: usize) -> bool {
-    OsRng.gen_range(0..=100) <= chance
+    OsRng.gen_range(1..=100) <= chance
 }
 
 fn get_server_info() -> (Option<String>, String) {

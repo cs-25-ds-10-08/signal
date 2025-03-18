@@ -309,11 +309,11 @@ impl<T: ClientDB, U: SignalServerAPI> Client<T, U> {
                 .expect("can get the time since epoch")
                 .as_secs(),
         };
-
         match self.server_api.send_msg(&msgs, &service_id).await {
             Ok(_) => Ok(()),
             Err(_) => {
                 let device_ids = self.get_new_device_ids(&service_id).await?;
+                println!("{:?}", device_ids);
                 self.update_contact(service_id, device_ids).await?;
                 self.server_api.send_msg(&msgs, &service_id).await
             }
