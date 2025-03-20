@@ -2,7 +2,8 @@ use crate::{
     contact_manager::ContactManager,
     encryption::{encrypt, pad_message},
     errors::{
-        DatabaseError, ProcessPreKeyBundleError, ReceiveMessageError, Result, SignalClientError,
+        DatabaseError, ProcessPreKeyBundleError, ReceiveMessageError, Result, SendMessageError,
+        SignalClientError,
     },
     key_manager::KeyManager,
     server::{SignalServer, SignalServerAPI},
@@ -12,7 +13,7 @@ use crate::{
         generic::{ProtocolStore, Storage},
     },
 };
-use axum::http::StatusCode;
+use axum::{http::StatusCode, response::IntoResponse};
 use base64::{prelude::BASE64_STANDARD, Engine as _};
 use common::{
     envelope::ProcessedEnvelope,
@@ -20,13 +21,17 @@ use common::{
     web_api::{AccountAttributes, RegistrationRequest, SignalMessage, SignalMessages},
 };
 use core::str;
+use futures::{future::BoxFuture, FutureExt};
 use libsignal_core::{Aci, DeviceId, Pni, ProtocolAddress, ServiceId};
 use libsignal_protocol::{process_prekey_bundle, CiphertextMessage, IdentityKeyPair};
 use prost::Message;
 use rand::{rngs::OsRng, Rng};
 use sqlx::{migrate::MigrateDatabase, Sqlite, SqlitePool};
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::{collections::HashMap, thread, time::Duration};
+use std::{collections::HashMap, pin, thread, time::Duration};
+use std::{
+    pin::Pin,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 pub struct Client<T: ClientDB, U: SignalServerAPI> {
     pub aci: Aci,
@@ -257,67 +262,97 @@ impl<T: ClientDB, U: SignalServerAPI> Client<T, U> {
     }
 
     pub async fn send_message(&mut self, message: &str, service_id: &ServiceId) -> Result<()> {
-        let content = Content::builder()
-            .data_message(
-                DataMessage::builder()
-                    .body(message.to_owned())
-                    .contact(vec![])
-                    .body_ranges(vec![])
-                    .preview(vec![])
-                    .attachments(vec![])
-                    .build(),
+        *Pin::into_inner(self._send_message(message, service_id).await)
+    }
+
+    async fn _send_message(
+        &mut self,
+        message: &str,
+        service_id: &ServiceId,
+    ) -> BoxFuture<Result<()>> {
+        async move {
+            let content = Content::builder()
+                .data_message(
+                    DataMessage::builder()
+                        .body(message.to_owned())
+                        .contact(vec![])
+                        .body_ranges(vec![])
+                        .preview(vec![])
+                        .attachments(vec![])
+                        .build(),
+                )
+                .build();
+
+            let timestamp = SystemTime::now();
+
+            let contact = match self.contact_manager.get_contact(service_id) {
+                Ok(contact) => contact,
+                Err(err) => return Err(err.into()),
+            };
+
+            let msgs = match encrypt(
+                &mut self.storage.protocol_store.identity_key_store,
+                &mut self.storage.protocol_store.session_store,
+                contact,
+                pad_message(content.encode_to_vec().as_ref()).as_ref(),
+                timestamp,
             )
-            .build();
+            .await
+            {
+                Ok(msgs) => msgs,
+                Err(err) => return Err(err.into()),
+            };
 
-        let timestamp = SystemTime::now();
-
-        let msgs = encrypt(
-            &mut self.storage.protocol_store.identity_key_store,
-            &mut self.storage.protocol_store.session_store,
-            self.contact_manager.get_contact(&service_id)?,
-            pad_message(content.encode_to_vec().as_ref()).as_ref(),
-            timestamp,
-        )
-        .await?;
-
-        // Put messages into structure ready.
-        let msgs = SignalMessages {
-            messages: msgs
-                .into_iter()
-                .map(|(id, msg)| SignalMessage {
-                    r#type: match msg.1 {
-                        CiphertextMessage::SignalMessage(_) => envelope::Type::Ciphertext.into(),
-                        CiphertextMessage::SenderKeyMessage(_) => {
-                            envelope::Type::KeyExchange.into()
-                        }
-                        CiphertextMessage::PreKeySignalMessage(_) => {
-                            envelope::Type::PrekeyBundle.into()
-                        }
-                        CiphertextMessage::PlaintextContent(_) => {
-                            envelope::Type::PlaintextContent.into()
-                        }
-                    },
-                    destination_device_id: id.into(),
-                    destination_registration_id: msg.0,
-                    content: BASE64_STANDARD.encode(msg.1.serialize()),
-                })
-                .collect(),
-            online: true,
-            urgent: false,
-            timestamp: timestamp
-                .duration_since(UNIX_EPOCH)
-                .expect("can get the time since epoch")
-                .as_secs(),
-        };
-        match self.server_api.send_msg(&msgs, &service_id).await {
-            Ok(_) => Ok(()),
-            Err(_) => {
-                let device_ids = self.get_new_device_ids(&service_id).await?;
-                println!("{:?}", device_ids);
-                self.update_contact(service_id, device_ids).await?;
-                self.server_api.send_msg(&msgs, &service_id).await
+            // Put messages into structure ready.
+            let msgs = SignalMessages {
+                messages: msgs
+                    .into_iter()
+                    .map(|(id, msg)| SignalMessage {
+                        r#type: match msg.1 {
+                            CiphertextMessage::SignalMessage(_) => {
+                                envelope::Type::Ciphertext.into()
+                            }
+                            CiphertextMessage::SenderKeyMessage(_) => {
+                                envelope::Type::KeyExchange.into()
+                            }
+                            CiphertextMessage::PreKeySignalMessage(_) => {
+                                envelope::Type::PrekeyBundle.into()
+                            }
+                            CiphertextMessage::PlaintextContent(_) => {
+                                envelope::Type::PlaintextContent.into()
+                            }
+                        },
+                        destination_device_id: id.into(),
+                        destination_registration_id: msg.0,
+                        content: BASE64_STANDARD.encode(msg.1.serialize()),
+                    })
+                    .collect(),
+                online: true,
+                urgent: false,
+                timestamp: timestamp
+                    .duration_since(UNIX_EPOCH)
+                    .expect("can get the time since epoch")
+                    .as_secs(),
+            };
+            match self.server_api.send_msg(&msgs, &service_id).await {
+                Ok(_) => Ok(()),
+                Err(SignalClientError::SendMessageError(
+                    SendMessageError::WebSocketMessageError(Some(err)),
+                )) if err.headers.contains(&format!("missingDevices")) => {
+                    let device_ids = match self.get_new_device_ids(&service_id).await {
+                        Ok(device_ids) => device_ids,
+                        Err(err) => return Err(err.into()),
+                    };
+                    match self.update_contact(service_id, device_ids).await {
+                        Ok(()) => (),
+                        Err(err) => return Err(err.into()),
+                    };
+                    self._send_message(message, service_id).await
+                }
+                err => err,
             }
         }
+        .boxed()
     }
 
     pub async fn receive_message(&mut self) -> Result<ProcessedEnvelope> {

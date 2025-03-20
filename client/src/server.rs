@@ -248,7 +248,7 @@ impl SignalServerAPI for SignalServer {
 
         if response.clone().response.unwrap().status.unwrap() >= 500 {
             return Err(SignalClientError::SendMessageError(
-                SendMessageError::WebSocketError(format!("{:?}", response)),
+                SendMessageError::WebSocketMessageError(response.response),
             ));
         }
 

@@ -2,12 +2,13 @@ use client::Client;
 use dotenv::{dotenv, var};
 use futures::{future::try_join_all, stream::FuturesUnordered, StreamExt};
 use libsignal_core::ServiceId;
-use rand::{rngs::OsRng, seq::SliceRandom, Rng};
+use rand::{rngs::OsRng, Rng};
 use server::SignalServer;
 use std::{
     env::{self},
     fs, io,
     path::{Path, PathBuf},
+    pin::Pin,
     sync::Arc,
     time::Duration,
 };
@@ -135,7 +136,7 @@ async fn experiment_2(
         .await
         .send_message("hello", &client1.read().await.aci.into())
         .await
-        .expect("This might work");
+        .expect("This works");
 
     receive_message(&mut *client1.write().await).await;
 
