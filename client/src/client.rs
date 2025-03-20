@@ -25,8 +25,8 @@ use libsignal_protocol::{process_prekey_bundle, CiphertextMessage, IdentityKeyPa
 use prost::Message;
 use rand::{rngs::OsRng, Rng};
 use sqlx::{migrate::MigrateDatabase, Sqlite, SqlitePool};
+use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::{collections::HashMap, thread, time::Duration};
 
 pub struct Client<T: ClientDB, U: SignalServerAPI> {
     pub aci: Aci,
@@ -242,9 +242,12 @@ impl<T: ClientDB, U: SignalServerAPI> Client<T, U> {
 
         server_api.create_auth_header(aci, password.clone(), 1.into());
 
+        let aci = device.get_aci().await.map_err(DatabaseError::from)?;
+        let pni = device.get_pni().await.map_err(DatabaseError::from)?;
+
         Ok(Client::new(
-            device.get_aci().await.map_err(DatabaseError::from)?,
-            device.get_pni().await.map_err(DatabaseError::from)?,
+            aci,
+            pni,
             ContactManager::new_with_contacts(contacts),
             server_api,
             KeyManager::new(signed + 1, kyber + 1, one_time + 1), // Adds 1 to prevent reusing key ids

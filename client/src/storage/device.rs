@@ -4,7 +4,7 @@ use super::{
     database::ClientDB,
     generic::{SignalStore, Storage},
 };
-use crate::contact_manager::Contact;
+use crate::{contact_manager::Contact, errors::SignalClientError};
 use axum::async_trait;
 use base64::{prelude::BASE64_STANDARD, Engine as _};
 use libsignal_core::{Aci, DeviceId, Pni, ProtocolAddress, ServiceId};
@@ -30,7 +30,7 @@ impl Device {
         &self,
         address: &ProtocolAddress,
         identity: &IdentityKey,
-    ) -> Result<(), SignalProtocolError> {
+    ) -> Result<(), SignalClientError> {
         let addr = format!("{}", address);
         let key = BASE64_STANDARD.encode(identity.serialize());
 
@@ -47,13 +47,15 @@ impl Device {
         .execute(&self.pool)
         .await
         .map(|_| ())
-        .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))
+        .map_err(|err| {
+            SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!("{err}")))
+        })
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl ClientDB for Device {
-    type Error = SignalProtocolError;
+    type Error = SignalClientError;
 
     async fn insert_account_information(
         &self,
@@ -76,7 +78,9 @@ impl ClientDB for Device {
         .execute(&self.pool)
         .await
         .map(|_| ())
-        .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+        .map_err(|err| {
+            SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!("{err}")))
+        })
     }
 
     async fn insert_account_key_information(
@@ -99,7 +103,9 @@ impl ClientDB for Device {
         .execute(&self.pool)
         .await
         .map(|_| ())
-        .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+        .map_err(|err| {
+            SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!("{err}")))
+        })
     }
 
     async fn get_key_ids(&self) -> Result<(u32, u32, u32), Self::Error> {
@@ -149,7 +155,9 @@ impl ClientDB for Device {
         .fetch_one(&self.pool)
         .await
         .map(|row| (row.mpkid as u32, row.spkid as u32, row.kpkid as u32))
-        .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+        .map_err(|err| {
+            SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!("{err}")))
+        })
     }
 
     async fn store_contact(&self, contact: &Contact) -> Result<(), Self::Error> {
@@ -174,7 +182,9 @@ impl ClientDB for Device {
         .execute(&self.pool)
         .await
         .map(|_| ())
-        .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+        .map_err(|err| {
+            SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!("{err}")))
+        })
     }
 
     async fn load_contacts(&self) -> Result<Vec<Contact>, Self::Error> {
@@ -198,9 +208,11 @@ impl ClientDB for Device {
                         for device_id in row.device_ids.split(",") {
                             device_ids.insert(DeviceId::from(device_id.parse::<u32>().map_err(
                                 |err| {
-                                    SignalProtocolError::InvalidArgument(format!(
-                                        "Could not parse device id: {err}"
-                                    ))
+                                    SignalClientError::Protocol(
+                                        SignalProtocolError::InvalidArgument(format!(
+                                            "Could not parse device id: {err}"
+                                        )),
+                                    )
                                 },
                             )?));
                         }
@@ -209,16 +221,20 @@ impl ClientDB for Device {
                         service_id: ServiceId::parse_from_service_id_string(
                             row.service_id.as_str(),
                         )
-                        .ok_or(SignalProtocolError::InvalidArgument(format!(
-                            "Could not parse service_id: {}",
-                            row.service_id
-                        )))?,
+                        .ok_or(SignalClientError::Protocol(
+                            SignalProtocolError::InvalidArgument(format!(
+                                "Could not parse service_id: {}",
+                                row.service_id
+                            )),
+                        ))?,
                         device_ids,
                     });
                 }
                 Ok(contacts)
             }
-            Err(err) => Err(SignalProtocolError::InvalidArgument(format!("{err}"))),
+            Err(err) => Err(SignalClientError::Protocol(
+                SignalProtocolError::InvalidArgument(format!("{err}")),
+            )),
         }
     }
 
@@ -237,7 +253,9 @@ impl ClientDB for Device {
         .execute(&self.pool)
         .await
         .map(|_| ())
-        .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+        .map_err(|err| {
+            SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!("{err}")))
+        })
     }
 
     async fn insert_service_id_for_nickname(
@@ -257,7 +275,9 @@ impl ClientDB for Device {
         .execute(&self.pool)
         .await
         .map(|_| ())
-        .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+        .map_err(|err| {
+            SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!("{err}")))
+        })
     }
 
     async fn get_service_id_by_nickname(&self, nickname: &str) -> Result<ServiceId, Self::Error> {
@@ -280,7 +300,9 @@ impl ClientDB for Device {
                     SignalProtocolError::InvalidArgument(format!("Could not parse service_id")),
                 )?,
             ),
-            Err(err) => Err(SignalProtocolError::InvalidArgument(format!("{err}"))),
+            Err(err) => Err(SignalClientError::Protocol(
+                SignalProtocolError::InvalidArgument(format!("{err}")),
+            )),
         }
     }
 
@@ -300,17 +322,25 @@ impl ClientDB for Device {
                 IdentityKey::decode(
                     &BASE64_STANDARD
                         .decode(row.public_key)
-                        .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))?,
+                        .map_err(|err| SignalClientError::GenericError(format!("{err}")))?,
                 )
-                .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))?,
+                .map_err(|err| {
+                    SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!(
+                        "{err}"
+                    )))
+                })?,
                 PrivateKey::deserialize(
                     &BASE64_STANDARD
                         .decode(row.private_key)
-                        .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))?,
+                        .map_err(|err| SignalClientError::GenericError(format!("{err}")))?,
                 )
-                .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))?,
+                .map_err(|err| {
+                    SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!(
+                        "{err}"
+                    )))
+                })?,
             )),
-            Err(err) => Err(SignalProtocolError::InvalidArgument(format!("{}", err))),
+            Err(err) => Err(SignalClientError::GenericError(format!("{err}"))),
         }
     }
 
@@ -326,18 +356,18 @@ impl ClientDB for Device {
         .fetch_one(&self.pool)
         .await
         .map(|row| row.registration_id as u32)
-        .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))
+        .map_err(|err| {
+            SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!("{err}")))
+        })
     }
     async fn save_identity(
         &mut self,
         address: &ProtocolAddress,
         identity: &IdentityKey,
     ) -> Result<bool, Self::Error> {
-        match self
-            .get_identity(address)
-            .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))?
-        {
+        match self.get_identity(address).await.map_err(|err| {
+            SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!("{err}")))
+        })? {
             Some(key) if key == *identity => Ok(false),
             Some(_key) => {
                 self.insert_identity(address, identity).await?;
@@ -389,7 +419,11 @@ impl ClientDB for Device {
             Ok(row) => Ok(Some(
                 BASE64_STANDARD
                     .decode(row.identity_key)
-                    .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))?
+                    .map_err(|err| {
+                        SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!(
+                            "{err}"
+                        )))
+                    })?
                     .as_slice()
                     .try_into()?,
             )),
@@ -417,11 +451,22 @@ impl ClientDB for Device {
             Ok(row) => PreKeyRecord::deserialize(
                 BASE64_STANDARD
                     .decode(row.pre_key_record)
-                    .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))?
+                    .map_err(|err| {
+                        SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!(
+                            "{err}"
+                        )))
+                    })?
                     .as_slice(),
             )
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err))),
-            Err(_) => Err(SignalProtocolError::InvalidPreKeyId),
+            .map_err(|err| {
+                SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!(
+                    "{}",
+                    err
+                )))
+            }),
+            Err(_) => Err(SignalClientError::Protocol(
+                SignalProtocolError::InvalidPreKeyId,
+            )),
         }
     }
 
@@ -446,7 +491,9 @@ impl ClientDB for Device {
         .execute(&self.pool)
         .await
         .map(|_| ())
-        .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))
+        .map_err(|err| {
+            SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!("{err}")))
+        })
     }
 
     async fn remove_pre_key(&mut self, prekey_id: PreKeyId) -> Result<(), Self::Error> {
@@ -464,7 +511,9 @@ impl ClientDB for Device {
         .execute(&self.pool)
         .await
         .map(|_| ())
-        .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))
+        .map_err(|err| {
+            SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!("{err}")))
+        })
     }
 
     async fn get_signed_pre_key(
@@ -490,11 +539,23 @@ impl ClientDB for Device {
             Ok(row) => SignedPreKeyRecord::deserialize(
                 BASE64_STANDARD
                     .decode(row.signed_pre_key_record)
-                    .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))?
+                    .map_err(|err| {
+                        SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!(
+                            "{}",
+                            err
+                        )))
+                    })?
                     .as_slice(),
             )
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err))),
-            Err(_) => Err(SignalProtocolError::InvalidPreKeyId),
+            .map_err(|err| {
+                SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!(
+                    "{}",
+                    err
+                )))
+            }),
+            Err(_) => Err(SignalClientError::Protocol(
+                SignalProtocolError::InvalidPreKeyId,
+            )),
         }
     }
 
@@ -519,7 +580,9 @@ impl ClientDB for Device {
         .execute(&self.pool)
         .await
         .map(|_| ())
-        .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))
+        .map_err(|err| {
+            SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!("{}", err)))
+        })
     }
 
     async fn get_kyber_pre_key(
@@ -545,10 +608,23 @@ impl ClientDB for Device {
             Ok(row) => KyberPreKeyRecord::deserialize(
                 BASE64_STANDARD
                     .decode(row.kyber_pre_key_record)
-                    .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))?
+                    .map_err(|err| {
+                        SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!(
+                            "{}",
+                            err
+                        )))
+                    })?
                     .as_slice(),
-            ),
-            Err(_) => Err(SignalProtocolError::InvalidKyberPreKeyId),
+            )
+            .map_err(|err| {
+                SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!(
+                    "{}",
+                    err
+                )))
+            }),
+            Err(_) => Err(SignalClientError::Protocol(
+                SignalProtocolError::InvalidKyberPreKeyId,
+            )),
         }
     }
 
@@ -573,7 +649,9 @@ impl ClientDB for Device {
         .execute(&self.pool)
         .await
         .map(|_| ())
-        .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))
+        .map_err(|err| {
+            SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!("{}", err)))
+        })
     }
     async fn load_session(
         &self,
@@ -598,10 +676,21 @@ impl ClientDB for Device {
             Ok(row) => SessionRecord::deserialize(
                 BASE64_STANDARD
                     .decode(row.session_record)
-                    .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))?
+                    .map_err(|err| {
+                        SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!(
+                            "{}",
+                            err
+                        )))
+                    })?
                     .as_slice(),
             )
-            .map(Some),
+            .map(Some)
+            .map_err(|err| {
+                SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!(
+                    "{}",
+                    err
+                )))
+            }),
             Err(_) => Ok(None),
         }
     }
@@ -626,7 +715,9 @@ impl ClientDB for Device {
         .execute(&self.pool)
         .await
         .map(|_| ())
-        .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))
+        .map_err(|err| {
+            SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!("{}", err)))
+        })
     }
     async fn store_sender_key(
         &mut self,
@@ -650,7 +741,9 @@ impl ClientDB for Device {
         .execute(&self.pool)
         .await
         .map(|_| ())
-        .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))
+        .map_err(|err| {
+            SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!("{}", err)))
+        })
     }
     async fn load_sender_key(
         &mut self,
@@ -676,10 +769,21 @@ impl ClientDB for Device {
             Ok(row) => SenderKeyRecord::deserialize(
                 BASE64_STANDARD
                     .decode(row.sender_key_record)
-                    .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))?
+                    .map_err(|err| {
+                        SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!(
+                            "{}",
+                            err
+                        )))
+                    })?
                     .as_slice(),
             )
-            .map(Some),
+            .map(Some)
+            .map_err(|err| {
+                SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!(
+                    "{}",
+                    err
+                )))
+            }),
             Err(_) => Ok(None),
         }
     }
@@ -695,7 +799,9 @@ impl ClientDB for Device {
         .execute(&self.pool)
         .await
         .map(|_| ())
-        .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))
+        .map_err(|err| {
+            SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!("{}", err)))
+        })
     }
     async fn get_password(&self) -> Result<String, Self::Error> {
         sqlx::query!(
@@ -709,7 +815,9 @@ impl ClientDB for Device {
         .fetch_one(&self.pool)
         .await
         .map(|row| row.password)
-        .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))
+        .map_err(|err| {
+            SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!("{}", err)))
+        })
     }
     async fn set_aci(&mut self, new_aci: Aci) -> Result<(), Self::Error> {
         let new_aci = new_aci.service_id_string();
@@ -724,7 +832,9 @@ impl ClientDB for Device {
         .execute(&self.pool)
         .await
         .map(|_| ())
-        .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))
+        .map_err(|err| {
+            SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!("{}", err)))
+        })
     }
     async fn get_aci(&self) -> Result<Aci, Self::Error> {
         match sqlx::query!(
@@ -739,12 +849,14 @@ impl ClientDB for Device {
         .await
         {
             Ok(row) => Ok(Aci::parse_from_service_id_string(row.aci.as_str()).ok_or(
-                SignalProtocolError::InvalidArgument(format!(
+                SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!(
                     "Could not convert {} to aci",
                     row.aci
-                )),
+                ))),
             )?),
-            Err(err) => Err(SignalProtocolError::InvalidArgument(format!("{}", err))),
+            Err(err) => Err(SignalClientError::Protocol(
+                SignalProtocolError::InvalidArgument(format!("{}", err)),
+            )),
         }
     }
     async fn set_pni(&mut self, new_pni: Pni) -> Result<(), Self::Error> {
@@ -760,7 +872,9 @@ impl ClientDB for Device {
         .execute(&self.pool)
         .await
         .map(|_| ())
-        .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))
+        .map_err(|err| {
+            SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!("{}", err)))
+        })
     }
     async fn get_pni(&self) -> Result<Pni, Self::Error> {
         match sqlx::query!(
@@ -775,60 +889,44 @@ impl ClientDB for Device {
         .await
         {
             Ok(row) => Ok(Pni::parse_from_service_id_string(row.pni.as_str()).ok_or(
-                SignalProtocolError::InvalidArgument(format!(
+                SignalClientError::Protocol(SignalProtocolError::InvalidArgument(format!(
                     "Could not convert {} to pni",
                     row.pni
-                )),
+                ))),
             )?),
-            Err(err) => Err(SignalProtocolError::InvalidArgument(format!("{}", err))),
+            Err(err) => Err(SignalClientError::Protocol(
+                SignalProtocolError::InvalidArgument(format!("{}", err)),
+            )),
         }
     }
 }
 
 #[async_trait(?Send)]
 impl SignalStore for Storage<Device> {
-    type Error = SignalProtocolError;
+    type Error = SignalClientError;
 
     async fn set_password(&mut self, new_password: String) -> Result<(), Self::Error> {
-        self.device
-            .set_password(new_password)
-            .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))
+        self.device.set_password(new_password).await
     }
 
     async fn get_password(&self) -> Result<String, Self::Error> {
-        self.device
-            .get_password()
-            .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))
+        self.device.get_password().await
     }
 
     async fn set_aci(&mut self, new_aci: Aci) -> Result<(), Self::Error> {
-        self.device
-            .set_aci(new_aci)
-            .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))
+        self.device.set_aci(new_aci).await
     }
 
     async fn get_aci(&self) -> Result<Aci, Self::Error> {
-        self.device
-            .get_aci()
-            .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))
+        self.device.get_aci().await
     }
 
     async fn set_pni(&mut self, new_pni: Pni) -> Result<(), Self::Error> {
-        self.device
-            .set_pni(new_pni)
-            .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))
+        self.device.set_pni(new_pni).await
     }
 
     async fn get_pni(&self) -> Result<Pni, Self::Error> {
-        self.device
-            .get_pni()
-            .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{}", err)))
+        self.device.get_pni().await
     }
 }
 

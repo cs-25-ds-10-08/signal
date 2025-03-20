@@ -1,6 +1,6 @@
-use std::error::Error;
 use std::fmt;
 use std::fmt::Display;
+use std::{error::Error, panic::UnwindSafe};
 
 use common::{protocol_address::ParseProtocolAddressError, SignalError};
 use derive_more::derive::{Display, Error, From};
@@ -36,10 +36,14 @@ pub enum SignalClientError {
     Protocol(SignalProtocolError),
     #[from]
     Signal(SignalError),
+    #[from]
+    GenericError(String),
 }
 
 impl Error for SignalClientError {}
 unsafe impl Send for SignalClientError {}
+unsafe impl Sync for SignalClientError {}
+impl UnwindSafe for SignalClientError {}
 
 #[derive(Debug, Display, From, Error)]
 pub struct ProcessPreKeyBundleError(pub SignalProtocolError);

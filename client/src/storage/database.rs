@@ -6,13 +6,14 @@ use libsignal_protocol::{
     SessionRecord, SessionStore, SignalProtocolError, SignedPreKeyId, SignedPreKeyRecord,
     SignedPreKeyStore,
 };
+use std::panic::UnwindSafe;
 use uuid::Uuid;
 
 use crate::contact_manager::Contact;
 
-#[async_trait(?Send)]
+#[async_trait]
 pub trait ClientDB {
-    type Error: std::error::Error + 'static;
+    type Error: std::error::Error + 'static + Send + Sync + UnwindSafe;
 
     async fn insert_account_information(
         &self,
@@ -118,17 +119,15 @@ impl<T: ClientDB> DeviceIdentityKeyStore<T> {
 #[async_trait(?Send)]
 impl<T: ClientDB> IdentityKeyStore for DeviceIdentityKeyStore<T> {
     async fn get_identity_key_pair(&self) -> Result<IdentityKeyPair, SignalProtocolError> {
-        self.db
-            .get_identity_key_pair()
-            .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+        self.db.get_identity_key_pair().await.map_err(|err| {
+            SignalProtocolError::for_application_callback("get_identity_key_pair")(err)
+        })
     }
 
     async fn get_local_registration_id(&self) -> Result<u32, SignalProtocolError> {
-        self.db
-            .get_local_registration_id()
-            .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+        self.db.get_local_registration_id().await.map_err(|err| {
+            SignalProtocolError::for_application_callback("get_local_registration_id")(err)
+        })
     }
 
     async fn save_identity(
@@ -139,7 +138,7 @@ impl<T: ClientDB> IdentityKeyStore for DeviceIdentityKeyStore<T> {
         self.db
             .save_identity(address, identity)
             .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+            .map_err(|err| SignalProtocolError::for_application_callback("save_identity")(err))
     }
 
     async fn is_trusted_identity(
@@ -151,7 +150,9 @@ impl<T: ClientDB> IdentityKeyStore for DeviceIdentityKeyStore<T> {
         self.db
             .is_trusted_identity(address, identity, _direction)
             .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+            .map_err(|err| {
+                SignalProtocolError::for_application_callback("is_trusted_identity")(err)
+            })
     }
 
     async fn get_identity(
@@ -161,7 +162,7 @@ impl<T: ClientDB> IdentityKeyStore for DeviceIdentityKeyStore<T> {
         self.db
             .get_identity(address)
             .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+            .map_err(|err| SignalProtocolError::for_application_callback("get_identity")(err))
     }
 }
 
@@ -180,7 +181,7 @@ impl<T: ClientDB> PreKeyStore for DevicePreKeyStore<T> {
         self.db
             .get_pre_key(prekey_id)
             .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+            .map_err(|err| SignalProtocolError::for_application_callback("get_pre_key")(err))
     }
 
     async fn save_pre_key(
@@ -191,14 +192,14 @@ impl<T: ClientDB> PreKeyStore for DevicePreKeyStore<T> {
         self.db
             .save_pre_key(prekey_id, record)
             .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+            .map_err(|err| SignalProtocolError::for_application_callback("save_pre_key")(err))
     }
 
     async fn remove_pre_key(&mut self, prekey_id: PreKeyId) -> Result<(), SignalProtocolError> {
         self.db
             .remove_pre_key(prekey_id)
             .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+            .map_err(|err| SignalProtocolError::for_application_callback("remove_pre_key")(err))
     }
 }
 
@@ -220,7 +221,7 @@ impl<T: ClientDB> SignedPreKeyStore for DeviceSignedPreKeyStore<T> {
         self.db
             .get_signed_pre_key(id)
             .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+            .map_err(|err| SignalProtocolError::for_application_callback("get_signed_pre_key")(err))
     }
 
     async fn save_signed_pre_key(
@@ -231,7 +232,9 @@ impl<T: ClientDB> SignedPreKeyStore for DeviceSignedPreKeyStore<T> {
         self.db
             .save_signed_pre_key(id, record)
             .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+            .map_err(|err| {
+                SignalProtocolError::for_application_callback("save_signed_pre_key")(err)
+            })
     }
 }
 
@@ -254,7 +257,7 @@ impl<T: ClientDB> KyberPreKeyStore for DeviceKyberPreKeyStore<T> {
         self.db
             .get_kyber_pre_key(kyber_prekey_id)
             .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+            .map_err(|err| SignalProtocolError::for_application_callback("get_kyber_pre_key")(err))
     }
 
     async fn save_kyber_pre_key(
@@ -265,7 +268,7 @@ impl<T: ClientDB> KyberPreKeyStore for DeviceKyberPreKeyStore<T> {
         self.db
             .save_kyber_pre_key(kyber_prekey_id, record)
             .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+            .map_err(|err| SignalProtocolError::for_application_callback("save_kyber_pre_key")(err))
     }
 
     async fn mark_kyber_pre_key_used(
@@ -295,7 +298,7 @@ impl<T: ClientDB> SessionStore for DeviceSessionStore<T> {
         self.db
             .load_session(address)
             .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+            .map_err(|err| SignalProtocolError::for_application_callback("load_session")(err))
     }
 
     async fn store_session(
@@ -306,7 +309,7 @@ impl<T: ClientDB> SessionStore for DeviceSessionStore<T> {
         self.db
             .store_session(address, record)
             .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+            .map_err(|err| SignalProtocolError::for_application_callback("store_session")(err))
     }
 }
 
@@ -330,7 +333,7 @@ impl<T: ClientDB> SenderKeyStore for DeviceSenderKeyStore<T> {
     ) -> Result<(), SignalProtocolError> {
         self.store_sender_key(sender, distribution_id, record)
             .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+            .map_err(|err| SignalProtocolError::for_application_callback("store_sender_key")(err))
     }
 
     async fn load_sender_key(
@@ -341,6 +344,6 @@ impl<T: ClientDB> SenderKeyStore for DeviceSenderKeyStore<T> {
         self.db
             .load_sender_key(sender, distribution_id)
             .await
-            .map_err(|err| SignalProtocolError::InvalidArgument(format!("{err}")))
+            .map_err(|err| SignalProtocolError::for_application_callback("load_sender_key")(err))
     }
 }

@@ -52,7 +52,7 @@ pub struct ProtocolStore<T: ClientDB> {
 
 unsafe impl Send for ProtocolStore<Device> {}
 
-impl<T: ClientDB + Clone> ProtocolStore<T> {
+impl<T: ClientDB + Clone + Send + Sync> ProtocolStore<T> {
     pub fn new(device: T) -> Self {
         Self {
             identity_key_store: DeviceIdentityKeyStore::new(device.clone()),
@@ -66,7 +66,7 @@ impl<T: ClientDB + Clone> ProtocolStore<T> {
 }
 
 #[async_trait(?Send)]
-impl<T: ClientDB> IdentityKeyStore for ProtocolStore<T> {
+impl<T: ClientDB + Send> IdentityKeyStore for ProtocolStore<T> {
     async fn get_identity_key_pair(&self) -> Result<IdentityKeyPair, SignalProtocolError> {
         self.identity_key_store.get_identity_key_pair().await
     }
@@ -105,7 +105,7 @@ impl<T: ClientDB> IdentityKeyStore for ProtocolStore<T> {
 }
 
 #[async_trait(?Send)]
-impl<T: ClientDB> PreKeyStore for ProtocolStore<T> {
+impl<T: ClientDB + Send> PreKeyStore for ProtocolStore<T> {
     async fn get_pre_key(&self, id: PreKeyId) -> Result<PreKeyRecord, SignalProtocolError> {
         self.pre_key_store.get_pre_key(id).await
     }
@@ -124,7 +124,7 @@ impl<T: ClientDB> PreKeyStore for ProtocolStore<T> {
 }
 
 #[async_trait(?Send)]
-impl<T: ClientDB> SignedPreKeyStore for ProtocolStore<T> {
+impl<T: ClientDB + Send> SignedPreKeyStore for ProtocolStore<T> {
     async fn get_signed_pre_key(
         &self,
         id: SignedPreKeyId,
@@ -144,7 +144,7 @@ impl<T: ClientDB> SignedPreKeyStore for ProtocolStore<T> {
 }
 
 #[async_trait(?Send)]
-impl<T: ClientDB> KyberPreKeyStore for ProtocolStore<T> {
+impl<T: ClientDB + Send> KyberPreKeyStore for ProtocolStore<T> {
     async fn get_kyber_pre_key(
         &self,
         kyber_prekey_id: KyberPreKeyId,
@@ -175,7 +175,7 @@ impl<T: ClientDB> KyberPreKeyStore for ProtocolStore<T> {
 }
 
 #[async_trait(?Send)]
-impl<T: ClientDB> SessionStore for ProtocolStore<T> {
+impl<T: ClientDB + Send> SessionStore for ProtocolStore<T> {
     async fn load_session(
         &self,
         address: &ProtocolAddress,
@@ -193,7 +193,7 @@ impl<T: ClientDB> SessionStore for ProtocolStore<T> {
 }
 
 #[async_trait(?Send)]
-impl<T: ClientDB> SenderKeyStore for ProtocolStore<T> {
+impl<T: ClientDB + Send> SenderKeyStore for ProtocolStore<T> {
     async fn store_sender_key(
         &mut self,
         sender: &ProtocolAddress,
@@ -216,4 +216,4 @@ impl<T: ClientDB> SenderKeyStore for ProtocolStore<T> {
     }
 }
 
-impl<T: ClientDB> SignalProtocolStore for ProtocolStore<T> {}
+impl<T: ClientDB + Send> SignalProtocolStore for ProtocolStore<T> {}

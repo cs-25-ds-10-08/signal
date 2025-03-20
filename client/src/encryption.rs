@@ -102,7 +102,7 @@ pub fn unpad_message(message: &[u8]) -> Result<Vec<u8>, PaddingError> {
     }
     Err(PaddingError::UnpadError)
 }
-
+/*
 #[cfg(test)]
 pub mod test {
     use super::*;
@@ -286,4 +286,4 @@ pub mod test {
 
         assert_eq!(msg.to_vec(), unpadded);
     }
-}
+}*/

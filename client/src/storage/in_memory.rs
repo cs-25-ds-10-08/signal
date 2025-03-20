@@ -46,7 +46,7 @@ impl InMemory {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl ClientDB for InMemory {
     type Error = SignalProtocolError;
 
@@ -88,7 +88,12 @@ impl ClientDB for InMemory {
         todo!()
     }
     async fn get_identity_key_pair(&self) -> Result<IdentityKeyPair, Self::Error> {
-        self.identity_key_store.get_identity_key_pair().await
+        self.identity_key_store
+            .get_identity_key_pair()
+            .await
+            .map_err(|err| {
+                SignalProtocolError::for_application_callback("get_identity_key_pair")(err)
+            })
     }
     async fn get_local_registration_id(&self) -> Result<u32, Self::Error> {
         self.identity_key_store.get_local_registration_id().await

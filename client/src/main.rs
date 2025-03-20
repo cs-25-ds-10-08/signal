@@ -1,6 +1,6 @@
 use client::Client;
 use dotenv::{dotenv, var};
-use futures::{future::try_join_all, stream::FuturesUnordered, StreamExt};
+use futures::{stream::FuturesUnordered, StreamExt};
 use libsignal_core::ServiceId;
 use rand::{rngs::OsRng, seq::SliceRandom, Rng};
 use server::SignalServer;
@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 use storage::device::Device;
-use tokio::{sync::RwLock, time::timeout};
+use tokio::{sync::RwLock, task, time::timeout};
 
 mod client;
 mod contact_manager;
@@ -27,8 +27,6 @@ mod storage;
 #[cfg(test)]
 mod test_utils;
 
-type Clients = Vec<Arc<RwLock<Client<Device, SignalServer>>>>;
-
 #[tokio::main]
 async fn main() {
     const ROUNDS: usize = 100;
@@ -39,9 +37,45 @@ async fn main() {
     #[allow(dead_code)]
     const GROUP_SIZE_MAX: usize = 5;
 
-    let mut error = None;
+    //let mut error = None;
 
-    match init(CLIENT_AMOUNT).await {
+    let service_ids: Arc<RwLock<Vec<ServiceId>>> = Arc::new(RwLock::new(vec![]));
+    let groups = Arc::new(make_groups(CLIENT_AMOUNT, GROUP_SIZE_MIN, GROUP_SIZE_MAX));
+    let (cert_path, server_url) = get_server_info();
+
+    for i in 2..CLIENT_AMOUNT {
+        let service_ids_clone = service_ids.clone();
+        let groups_clone = groups.clone();
+        let server_url_clone = server_url.clone();
+        let cert_path_clone = cert_path.clone();
+
+        task::spawn(async move {
+            // Subscribe to sender
+
+            // Make Client
+            let client = make_client(
+                format!("client_{}", i),
+                i.to_string(),
+                cert_path_clone,
+                server_url_clone,
+            )
+            .await;
+
+            service_ids_clone.write().await.push(client.aci.into());
+
+            // Run experiment
+            /*experiment_2(
+                ROUNDS,
+                GROUP_SIZE_MIN,
+                GROUP_SIZE_MAX,
+                client,
+                service_ids_clone,
+                groups_clone,
+            );*/
+        });
+    }
+
+    /*match init(CLIENT_AMOUNT).await {
         Ok(clients) => {
             if let Err(e) = experiment_1(ROUNDS, clients).await
             //experiment_2(ROUNDS, clients, GROUP_SIZE_MIN, GROUP_SIZE_MAX).await
@@ -52,16 +86,16 @@ async fn main() {
         Err(e) => {
             error = Some(e);
         }
-    };
+    };*/
 
-    cleanup();
+    /*cleanup();
     if error.is_some() {
         println!("ERROR: {}", error.unwrap());
-    }
+    }*/
 }
 
 // Random noise
-#[allow(dead_code)]
+/*#[allow(dead_code)]
 async fn experiment_1(rounds: usize, clients: Clients) -> Result<(), String> {
     let clients = Arc::new(clients);
 
@@ -116,16 +150,18 @@ async fn experiment_1(rounds: usize, clients: Clients) -> Result<(), String> {
 
     disconnect_clients(clients.to_vec()).await;
     Ok(())
-}
+}*/
 
 // Can only comunicate with clients in its own group
 // A client will only be present in one group
-#[allow(dead_code)]
+/*#[allow(dead_code)]
 async fn experiment_2(
     rounds: usize,
-    clients: Clients,
     group_size_min: usize,
     group_size_max: usize,
+    client: Client<Device, SignalServer>,
+    service_ids: Arc<RwLock<Vec<ServiceId>>>,
+    groups: Arc<Vec<Vec<usize>>>,
 ) -> Result<(), Box<dyn Error>> {
     let groups = make_groups(clients.len(), group_size_min, group_size_max);
 
@@ -173,7 +209,7 @@ async fn experiment_2(
     Ok(())
 }
 
-async fn init(client_amount: usize) -> Result<Clients, String> {
+async fn init(client_amount: usize, client_behavior: FnMut) -> Result<(), String> {
     dotenv().expect("You need to add a .env file");
     let clients = make_clients(client_amount).await?;
 
@@ -194,8 +230,9 @@ fn cleanup() {
         }
     }
     println!("Cleaned up 🧹");
-}
+}*/
 
+/*
 async fn make_clients(client_amount: usize) -> Result<Clients, String> {
     let (cert_path, server_url) = get_server_info();
     let mut clients;
@@ -246,14 +283,14 @@ async fn make_clients(client_amount: usize) -> Result<Clients, String> {
     )));
 
     Ok(clients)
-}
+} */
 
 async fn make_client(
     name: String,
     phone: String,
     certificate_path: Option<String>,
     server_url: String,
-) -> Result<Client<Device, SignalServer>, String> {
+) -> Client<Device, SignalServer> {
     let db_path = client_db_path() + "/" + &name + ".db";
     let db_url = format!("sqlite://{}", db_path);
     let client = if Path::exists(Path::new(&db_path)) {
@@ -268,7 +305,8 @@ async fn make_client(
         )
         .await
     };
-    client.map_err(|e| format!("Failed to create client: {}", e))
+    client.unwrap()
+    //.map_err(|e| format!("Failed to create client: {}", e))
 }
 
 #[allow(dead_code)]
@@ -327,7 +365,6 @@ fn true_by_chance(chance: usize) -> bool {
 
 fn get_server_info() -> (Option<String>, String) {
     let use_tls = !env::args().any(|arg| arg == "--no-tls");
-    println!("Using tls: {}", use_tls);
     if use_tls {
         rustls::crypto::ring::default_provider()
             .install_default()
