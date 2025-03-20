@@ -127,9 +127,9 @@ pub async fn signal_ws_connect(
         ("x-signal-receive-stories", "false".to_string()),
     ];
 
-    for (key, value) in headers.iter() {
+    for (key, value) in headers.into_iter() {
         req.headers_mut().insert(
-            *key,
+            key,
             value
                 .parse()
                 .map_err(|_| format!("failed to add {} header", key))?,
@@ -146,6 +146,7 @@ pub async fn signal_ws_connect(
         let keepalive = TcpKeepalive::new()
             .with_time(std::time::Duration::from_secs(10))
             .with_interval(Duration::from_secs(10));
+
         let socket_ref = SockRef::from(&stream);
         socket_ref
             .set_tcp_keepalive(&keepalive)
@@ -211,6 +212,7 @@ impl<T: WSStream<Message, tungstenite::Error> + std::fmt::Debug> SocketManager<T
         }
         let (sender, mut receiver) = stream.split();
         *guard = ConnectionState::Active(sender);
+        drop(guard);
 
         let mut mgr = self.clone();
 

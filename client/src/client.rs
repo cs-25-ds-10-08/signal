@@ -271,6 +271,8 @@ impl<T: ClientDB, U: SignalServerAPI> Client<T, U> {
 
         let timestamp = SystemTime::now();
 
+        self.add_contact(service_id).await?;
+
         let msgs = encrypt(
             &mut self.storage.protocol_store.identity_key_store,
             &mut self.storage.protocol_store.session_store,
@@ -309,15 +311,8 @@ impl<T: ClientDB, U: SignalServerAPI> Client<T, U> {
                 .expect("can get the time since epoch")
                 .as_secs(),
         };
-        match self.server_api.send_msg(&msgs, &service_id).await {
-            Ok(_) => Ok(()),
-            Err(_) => {
-                let device_ids = self.get_new_device_ids(&service_id).await?;
-                println!("{:?}", device_ids);
-                self.update_contact(service_id, device_ids).await?;
-                self.server_api.send_msg(&msgs, &service_id).await
-            }
-        }
+
+        self.server_api.send_msg(&msgs, &service_id).await
     }
 
     pub async fn receive_message(&mut self) -> Result<ProcessedEnvelope> {
@@ -363,38 +358,8 @@ impl<T: ClientDB, U: SignalServerAPI> Client<T, U> {
             .add_contact(&service_id)
             .map_err(SignalClientError::ContactManagerError)?;
 
-        let contact = self
-            .contact_manager
-            .get_contact(&service_id)
-            .map_err(SignalClientError::ContactManagerError)?;
-
-        self.storage
-            .device
-            .store_contact(contact)
-            .await
-            .map_err(DatabaseError::from)?;
-
-        let device_ids = self.get_new_device_ids(&service_id).await?;
+        let device_ids = self.update_device_ids(&service_id).await?;
         self.update_contact(service_id, device_ids).await
-    }
-
-    pub async fn remove_contact(&mut self, alias: &str) -> Result<()> {
-        let service_id = self
-            .storage
-            .device
-            .get_service_id_by_nickname(alias)
-            .await
-            .map_err(DatabaseError::from)?;
-
-        self.contact_manager
-            .remove_contact(&service_id)
-            .map_err(SignalClientError::ContactManagerError)?;
-
-        self.storage
-            .device
-            .remove_contact(&service_id)
-            .await
-            .map_err(|err| DatabaseError::Custom(Box::new(err)).into())
     }
 
     async fn update_contact(
@@ -418,7 +383,7 @@ impl<T: ClientDB, U: SignalServerAPI> Client<T, U> {
             .map_err(|err| DatabaseError::Custom(Box::new(err)).into())
     }
 
-    async fn get_new_device_ids(&mut self, service_id: &ServiceId) -> Result<Vec<DeviceId>> {
+    async fn update_device_ids(&mut self, service_id: &ServiceId) -> Result<Vec<DeviceId>> {
         let bundles = self.server_api.fetch_pre_key_bundles(service_id).await?;
 
         let mut device_ids = Vec::new();

@@ -53,24 +53,17 @@ impl ContactManager {
     }
 
     pub fn get_contact(&mut self, service_id: &ServiceId) -> Result<&Contact, ContactManagerError> {
-        if !self.contacts.contains_key(service_id) {
-            self.add_contact(service_id)?;
-        }
-
-        Ok(self
-            .contacts
+        self.contacts
             .get(service_id)
-            .expect("If case is denfensive check"))
+            .ok_or(ContactManagerError::ServiceIDNotFound(
+                service_id.to_owned(),
+            ))
     }
 
     fn get_contact_mut(
         &mut self,
         service_id: &ServiceId,
     ) -> Result<&mut Contact, ContactManagerError> {
-        if !self.contacts.contains_key(service_id) {
-            self.add_contact(service_id)?;
-        }
-
         self.contacts
             .get_mut(service_id)
             .ok_or(ContactManagerError::ServiceIDNotFound(

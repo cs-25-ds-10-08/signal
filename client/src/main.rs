@@ -31,7 +31,7 @@ type Clients = Vec<Arc<RwLock<Client<Device, SignalServer>>>>;
 #[tokio::main]
 async fn main() {
     const ROUNDS: usize = 100;
-    const CLIENT_AMOUNT: usize = 10;
+    const CLIENT_AMOUNT: usize = 100;
 
     #[allow(dead_code)]
     const GROUP_SIZE_MIN: usize = 2;
@@ -128,18 +128,7 @@ async fn experiment_2(
     group_size_min: usize,
     group_size_max: usize,
 ) -> Result<(), String> {
-    let client0 = clients[8].clone();
-    let client1 = clients[9].clone();
-    client0
-        .write()
-        .await
-        .send_message("hello", &client1.read().await.aci.into())
-        .await
-        .expect("This might work");
-
-    receive_message(&mut *client1.write().await).await;
-
-    /*let groups = make_groups(clients.len(), group_size_min, group_size_max);
+    let groups = make_groups(clients.len(), group_size_min, group_size_max);
 
     groups
         .iter()
@@ -147,41 +136,29 @@ async fn experiment_2(
             let mut force_new_conversation = true;
             for _ in 0..rounds {
                 let members = group.choose_multiple(&mut OsRng, 2).collect::<Vec<_>>();
-                let client = clients[*members[0]].clone();
-                let backup: ServiceId = clients[*members[1]].read().await.aci.into();
 
-                loop {
-                    match timeout(
-                        Duration::from_millis(100),
-                        receive_message(&mut *client.write().await),
-                    )
-                    .await
-                    .ok()
-                    {
-                        Some((receiver, _)) => {
-                            println!("THIS CANT BEE");
-                            /*if true_by_chance(0) {
-                                force_new_conversation = true;
-                                continue;
-                            }*/
-                            force_new_conversation = false;
-                            for _ in 0..OsRng.gen_range(1..3) {
-                                client
-                                    .write()
-                                    .await
-                                    .send_message("hello", &receiver)
-                                    .await
-                                    .expect("This might work");
-                            }
-                        }
-                        None => break,
+                let client = clients[*members[0]].clone();
+                let mut client = client.write().await;
+
+                let backup: ServiceId = clients[*members[1]].clone().read().await.aci.into();
+
+                while let Ok((receiver, _)) =
+                    timeout(Duration::from_millis(100), receive_message(&mut client)).await
+                {
+                    if true_by_chance(5) {
+                        force_new_conversation = true;
+                        continue;
                     }
+                    force_new_conversation = false;
+
+                    client
+                        .send_message("hello", &receiver)
+                        .await
+                        .expect("This might work");
                 }
 
                 if force_new_conversation || true_by_chance(10) {
                     client
-                        .write()
-                        .await
                         .send_message("hello", &backup)
                         .await
                         .expect("This might work");
@@ -190,13 +167,14 @@ async fn experiment_2(
         })
         .collect::<FuturesUnordered<_>>()
         .collect::<Vec<_>>()
-        .await;*/
+        .await;
 
     disconnect_clients(clients).await;
     Ok(())
 }
 
 async fn init(client_amount: usize) -> Result<Clients, String> {
+    cleanup();
     dotenv().expect("You need to add a .env file");
     let clients = make_clients(client_amount).await?;
 
