@@ -53,6 +53,10 @@ impl ContactManager {
     }
 
     pub fn get_contact(&mut self, service_id: &ServiceId) -> Result<&Contact, ContactManagerError> {
+        if !self.contacts.contains_key(service_id) {
+            self.add_contact(service_id)?
+        }
+
         self.contacts
             .get(service_id)
             .ok_or(ContactManagerError::ServiceIDNotFound(
@@ -64,6 +68,10 @@ impl ContactManager {
         &mut self,
         service_id: &ServiceId,
     ) -> Result<&mut Contact, ContactManagerError> {
+        if !self.contacts.contains_key(service_id) {
+            self.add_contact(service_id)?
+        }
+
         self.contacts
             .get_mut(service_id)
             .ok_or(ContactManagerError::ServiceIDNotFound(

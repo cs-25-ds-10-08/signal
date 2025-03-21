@@ -2,7 +2,8 @@ use crate::{
     contact_manager::ContactManager,
     encryption::{encrypt, pad_message},
     errors::{
-        DatabaseError, ProcessPreKeyBundleError, ReceiveMessageError, Result, SignalClientError,
+        DatabaseError, ProcessPreKeyBundleError, ReceiveMessageError, Result, SendMessageError,
+        SignalClientError,
     },
     key_manager::KeyManager,
     server::{SignalServer, SignalServerAPI},
@@ -16,7 +17,7 @@ use axum::http::StatusCode;
 use base64::{prelude::BASE64_STANDARD, Engine as _};
 use common::{
     envelope::ProcessedEnvelope,
-    signalservice::{envelope, Content, DataMessage, Envelope},
+    signalservice::{envelope, Content, DataMessage, Envelope, WebSocketResponseMessage},
     web_api::{AccountAttributes, RegistrationRequest, SignalMessage, SignalMessages},
 };
 use core::str;
@@ -257,62 +258,80 @@ impl<T: ClientDB, U: SignalServerAPI> Client<T, U> {
     }
 
     pub async fn send_message(&mut self, message: &str, service_id: &ServiceId) -> Result<()> {
-        let content = Content::builder()
-            .data_message(
-                DataMessage::builder()
-                    .body(message.to_owned())
-                    .contact(vec![])
-                    .body_ranges(vec![])
-                    .preview(vec![])
-                    .attachments(vec![])
-                    .build(),
+        loop {
+            let content = Content::builder()
+                .data_message(
+                    DataMessage::builder()
+                        .body(message.to_owned())
+                        .contact(vec![])
+                        .body_ranges(vec![])
+                        .preview(vec![])
+                        .attachments(vec![])
+                        .build(),
+                )
+                .build();
+
+            let timestamp = SystemTime::now();
+
+            let msgs = encrypt(
+                &mut self.storage.protocol_store.identity_key_store,
+                &mut self.storage.protocol_store.session_store,
+                self.contact_manager.get_contact(&service_id)?,
+                pad_message(content.encode_to_vec().as_ref()).as_ref(),
+                timestamp,
             )
-            .build();
+            .await?;
 
-        let timestamp = SystemTime::now();
+            // Put messages into structure ready.
+            let msgs = SignalMessages {
+                messages: msgs
+                    .into_iter()
+                    .map(|(id, msg)| SignalMessage {
+                        r#type: match msg.1 {
+                            CiphertextMessage::SignalMessage(_) => {
+                                envelope::Type::Ciphertext.into()
+                            }
+                            CiphertextMessage::SenderKeyMessage(_) => {
+                                envelope::Type::KeyExchange.into()
+                            }
+                            CiphertextMessage::PreKeySignalMessage(_) => {
+                                envelope::Type::PrekeyBundle.into()
+                            }
+                            CiphertextMessage::PlaintextContent(_) => {
+                                envelope::Type::PlaintextContent.into()
+                            }
+                        },
+                        destination_device_id: id.into(),
+                        destination_registration_id: msg.0,
+                        content: BASE64_STANDARD.encode(msg.1.serialize()),
+                    })
+                    .collect(),
+                online: true,
+                urgent: false,
+                timestamp: timestamp
+                    .duration_since(UNIX_EPOCH)
+                    .expect("can get the time since epoch")
+                    .as_secs(),
+            };
 
-        self.add_contact(service_id).await?;
-
-        let msgs = encrypt(
-            &mut self.storage.protocol_store.identity_key_store,
-            &mut self.storage.protocol_store.session_store,
-            self.contact_manager.get_contact(&service_id)?,
-            pad_message(content.encode_to_vec().as_ref()).as_ref(),
-            timestamp,
-        )
-        .await?;
-
-        // Put messages into structure ready.
-        let msgs = SignalMessages {
-            messages: msgs
-                .into_iter()
-                .map(|(id, msg)| SignalMessage {
-                    r#type: match msg.1 {
-                        CiphertextMessage::SignalMessage(_) => envelope::Type::Ciphertext.into(),
-                        CiphertextMessage::SenderKeyMessage(_) => {
-                            envelope::Type::KeyExchange.into()
-                        }
-                        CiphertextMessage::PreKeySignalMessage(_) => {
-                            envelope::Type::PrekeyBundle.into()
-                        }
-                        CiphertextMessage::PlaintextContent(_) => {
-                            envelope::Type::PlaintextContent.into()
-                        }
-                    },
-                    destination_device_id: id.into(),
-                    destination_registration_id: msg.0,
-                    content: BASE64_STANDARD.encode(msg.1.serialize()),
-                })
-                .collect(),
-            online: true,
-            urgent: false,
-            timestamp: timestamp
-                .duration_since(UNIX_EPOCH)
-                .expect("can get the time since epoch")
-                .as_secs(),
-        };
-
-        self.server_api.send_msg(&msgs, &service_id).await
+            match self.server_api.send_msg(&msgs, &service_id).await {
+                Ok(()) => return Ok(()),
+                Err(SignalClientError::SendMessageError(
+                    SendMessageError::WebSocketMessageError(Some(err)),
+                )) if err
+                    .headers
+                    .iter()
+                    .filter(|header| header.contains("\"extraDevices\":[]"))
+                    .collect::<Vec<_>>()
+                    .len()
+                    > 0 =>
+                {
+                    self.update_contact(service_id).await?;
+                    continue;
+                }
+                Err(err) => return Err(err),
+            }
+        }
     }
 
     pub async fn receive_message(&mut self) -> Result<ProcessedEnvelope> {
@@ -350,23 +369,8 @@ impl<T: ClientDB, U: SignalServerAPI> Client<T, U> {
         Ok(processed)
     }
 
-    pub async fn add_contact(&mut self, service_id: &ServiceId) -> Result<()> {
-        if self.contact_manager.get_contact(&service_id).is_ok() {
-            return Ok(());
-        }
-        self.contact_manager
-            .add_contact(&service_id)
-            .map_err(SignalClientError::ContactManagerError)?;
-
+    async fn update_contact(&mut self, service_id: &ServiceId) -> Result<()> {
         let device_ids = self.update_device_ids(&service_id).await?;
-        self.update_contact(service_id, device_ids).await
-    }
-
-    async fn update_contact(
-        &mut self,
-        service_id: &ServiceId,
-        device_ids: Vec<DeviceId>,
-    ) -> Result<()> {
         self.contact_manager
             .update_contact(&service_id, device_ids)
             .map_err(SignalClientError::ContactManagerError)?;

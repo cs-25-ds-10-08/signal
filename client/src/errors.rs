@@ -2,7 +2,10 @@ use std::error::Error;
 use std::fmt;
 use std::fmt::Display;
 
-use common::{protocol_address::ParseProtocolAddressError, SignalError};
+use common::{
+    protocol_address::ParseProtocolAddressError, signalservice::WebSocketResponseMessage,
+    SignalError,
+};
 use derive_more::derive::{Display, Error, From};
 use libsignal_core::{DeviceId, ServiceId};
 use libsignal_protocol::SignalProtocolError;
@@ -88,6 +91,7 @@ impl Error for RegistrationError {}
 pub enum SendMessageError {
     EncryptionError(SignalProtocolError),
     WebSocketError(String),
+    WebSocketMessageError(Option<WebSocketResponseMessage>),
 }
 
 impl fmt::Debug for SendMessageError {
@@ -101,6 +105,7 @@ impl fmt::Display for SendMessageError {
         let message = match self {
             Self::EncryptionError(err) => format!("{err}"),
             Self::WebSocketError(err) => err.to_owned(),
+            Self::WebSocketMessageError(err) => format!("{:?}", err),
         };
         write!(f, "Could not send message - {}", message)
     }
