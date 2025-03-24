@@ -187,7 +187,7 @@ impl KeyManager {
         let mut pq_signed_pre_keys: Vec<UploadSignedPreKey> = Vec::new();
         let mut rng = OsRng;
 
-        for _ in 0..100 {
+        for _ in 0..200 {
             pre_keys.push(UploadPreKey::from(
                 self.generate_pre_key(store, &mut rng).await?,
             ));

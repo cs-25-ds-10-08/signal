@@ -42,8 +42,8 @@ async fn main() {
 
     match init(CLIENT_AMOUNT).await {
         Ok(clients) => {
-            if let Err(e) = //experiment_1(ROUNDS, clients).await
-                experiment_2(ROUNDS, clients, GROUP_SIZE_MIN, GROUP_SIZE_MAX).await
+            if let Err(e) = experiment_1(ROUNDS, clients).await
+            //experiment_2(ROUNDS, clients, GROUP_SIZE_MIN, GROUP_SIZE_MAX).await
             {
                 error = Some(e);
             }
@@ -62,19 +62,35 @@ async fn main() {
 // Random noise
 #[allow(dead_code)]
 async fn experiment_1(rounds: usize, clients: Clients) -> Result<(), String> {
-    let clients = Arc::new(clients);
+    let service_ids: Arc<Vec<ServiceId>> = Arc::new(
+        clients
+            .clone()
+            .iter()
+            .map(|client| async { ServiceId::from(client.read().await.aci) })
+            .collect::<FuturesUnordered<_>>()
+            .collect()
+            .await,
+    );
 
     clients
+        .clone()
         .iter()
         .enumerate()
         .map(|(i, client)| {
-            let clients = clients.clone();
+            let service_ids = service_ids.clone();
+
             async move {
+                let service_ids_len = service_ids.len();
+                let target_clients = &service_ids[service_ids_len - 2..service_ids_len];
+                let mut client_lock = client.write().await;
+                let client_service_id = client_lock.aci.into();
                 let mut force_new_conversation = true;
-                for _ in 0..rounds {
+
+                for r in 0..rounds {
+                    //println!("{}", r);
                     while let Some((receiver, _)) = timeout(
-                        Duration::from_millis(100),
-                        receive_message(&mut *client.write().await),
+                        Duration::from_millis(1000),
+                        receive_message(&mut client_lock),
                     )
                     .await
                     .ok()
@@ -82,40 +98,44 @@ async fn experiment_1(rounds: usize, clients: Clients) -> Result<(), String> {
                         if true_by_chance(10) {
                             continue;
                         }
+                        println!("{r}");
                         force_new_conversation = false;
-                        client
-                            .write()
-                            .await
-                            .send_message("hello", &receiver)
-                            .await
-                            .expect("This might works");
+
+                        if target_clients.contains(&receiver)
+                            == target_clients.contains(&client_service_id)
+                        {
+                            client_lock
+                                .send_message("hello", &receiver)
+                                .await
+                                .expect("This works");
+                        }
                     }
 
                     if force_new_conversation || true_by_chance(10) {
-                        let random_client_nr = loop {
-                            let rand = OsRng.gen_range(0..clients.len());
-                            if rand != i {
-                                break rand;
+                        let backup = if target_clients.contains(&client_service_id) {
+                            target_clients[i % (service_ids_len - target_clients.len())]
+                        } else {
+                            loop {
+                                let rand = OsRng.gen_range(0..service_ids_len);
+                                if rand != i {
+                                    break service_ids[rand];
+                                }
                             }
                         };
-
-                        let backup = clients[random_client_nr].read().await.aci.into();
-
-                        client
-                            .write()
-                            .await
+                        client_lock
                             .send_message("hello", &backup)
                             .await
                             .expect("This might works");
                     }
                 }
+                println!("{}", i);
             }
         })
         .collect::<FuturesUnordered<_>>()
         .collect::<Vec<_>>()
         .await;
 
-    disconnect_clients(clients.to_vec()).await;
+    disconnect_clients(clients).await;
     Ok(())
 }
 
@@ -199,20 +219,7 @@ fn cleanup() {
 
 async fn make_clients(client_amount: usize) -> Result<Clients, String> {
     let (cert_path, server_url) = get_server_info();
-    let mut clients; //= vec![];
-
-    /*for i in 2..client_amount {
-        println!("{}", i);
-        clients.push(Arc::new(RwLock::new(
-            make_client(
-                format!("client_{}", i),
-                i.to_string(),
-                cert_path.clone(),
-                server_url.clone(),
-            )
-            .await?,
-        )))
-    }*/
+    let mut clients;
 
     clients = try_join_all((2..client_amount).map(|i| {
         make_client(

@@ -38,7 +38,7 @@ use axum::{
 use axum_extra::{headers, TypedHeader};
 use axum_server::tls_rustls::RustlsConfig;
 use base64::prelude::{Engine as _, BASE64_STANDARD};
-use base64::prelude::{Engine as _, BASE64_URL_SAFE, BASE64_URL_SAFE_NO_PAD};
+use base64::prelude::{BASE64_URL_SAFE, BASE64_URL_SAFE_NO_PAD};
 use common::web_api::{
     authorization::BasicAuthorizationHeader, DeviceCapabilityType, DevicePreKeyBundle,
     LinkDeviceRequest, PreKeyCount, PreKeyResponse, RegistrationRequest, RegistrationResponse,

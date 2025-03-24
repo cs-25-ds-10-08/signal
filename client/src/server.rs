@@ -246,7 +246,7 @@ impl SignalServerAPI for SignalServer {
             .await
             .map_err(SendMessageError::WebSocketError)?;
 
-        if response.clone().response.unwrap().status.unwrap() >= 500 {
+        if response.clone().response.unwrap().status.unwrap() >= 300 {
             return Err(SignalClientError::SendMessageError(
                 SendMessageError::WebSocketMessageError(response.response),
             ));
@@ -336,7 +336,7 @@ impl SignalServer {
             .try_into()
             .expect("Could not connect to server.");
         let http_client = http_client.with(SignalLayer);
-        let socket_mgr = SocketManager::new(32);
+        let socket_mgr = SocketManager::new(160);
 
         let filter = |x: &WebSocketMessage| -> Option<WebSocketMessage> {
             if x.r#type() != web_socket_message::Type::Request || x.request.is_none() {
@@ -405,7 +405,7 @@ impl SignalServer {
         req_type: ReqType,
         uri: String,
     ) -> Result<Response, ServerRequestError> {
-        println!("Sent {} request to {}", req_type, uri);
+        //println!("Send {} request to {}", req_type, uri);
         let header = match &self.auth_header {
             Some(header) => header,
             None => Err(ServerRequestError::NoAuthDevice)?,
